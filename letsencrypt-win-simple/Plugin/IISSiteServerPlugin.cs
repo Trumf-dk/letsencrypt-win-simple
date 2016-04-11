@@ -168,7 +168,7 @@ namespace LetsEncrypt.ACME.Simple
             return totalTarget;
         }
 
-        private static void ProcessTotaltarget(Target totalTarget, List<Target> runSites)
+        public static void ProcessTotaltarget(Target totalTarget, List<Target> runSites)
         {
             if (!Program.CentralSsl)
             {

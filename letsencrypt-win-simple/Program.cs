@@ -22,10 +22,11 @@ namespace LetsEncrypt.ACME.Simple
 {
     class Program
     {
-        private const string ClientName = "letsencrypt-win-simple";
-        private static string _certificateStore = "WebHosting";
+        public const string ClientName = "letsencrypt-win-simple";
+        public static string _certificateStore = "WebHosting";
         public static float RenewalPeriod = 60;
         public static bool CentralSsl = false;
+        public const int SanMax = 100;
         public static string BaseUri { get; set; }
         private static string _configPath;
         private static string _certificatePath;
@@ -343,7 +344,12 @@ namespace LetsEncrypt.ACME.Simple
                         {
                             Console.WriteLine(" A: Get certificates for all hosts");
                             Console.WriteLine(" Q: Quit");
-                            Console.Write("Which host do you want to get a certificate for: ");
+                            if (!Options.San)
+                            {
+                                Console.WriteLine(" You can also enter the number for a specific host from the list.");
+                                Console.WriteLine(" Enter more numbers seperated by comma to get certificates for several hosts.");
+                            }
+                            Console.WriteLine("\n Which action do you want to perform: ");
                             var response = Console.ReadLine().ToLowerInvariant();
                             switch (response)
                             {
@@ -372,6 +378,22 @@ namespace LetsEncrypt.ACME.Simple
                                         {
                                             var binding = targets.Where(t => t.SiteId == targetId).First();
                                             binding.Plugin.Auto(binding);
+                                        }
+                                    }
+                                    else if (response.IndexOf(',') > -1 && !Options.San)
+                                    {
+                                        var split = response.Split(',');
+                                        foreach (string item in split)
+                                        {
+                                            if (Int32.TryParse(item.Trim(), out targetId))
+                                            {
+                                                targetId--;
+                                                if (targetId >= 0 && targetId < targets.Count)
+                                                {
+                                                    var binding = targets[targetId];
+                                                    binding.Plugin.Auto(binding);
+                                                }
+                                            }
                                         }
                                     }
                                     else
@@ -1017,61 +1039,83 @@ namespace LetsEncrypt.ACME.Simple
                     filePath = filePath.Substring(1);
                 var answerPath = Environment.ExpandEnvironmentVariables(Path.Combine(webRootPath, filePath));
 
-                target.Plugin.CreateAuthorizationFile(answerPath, httpChallenge.FileContent);
-
-                target.Plugin.BeforeAuthorize(target, answerPath, httpChallenge.Token);
-
-                var answerUri = new Uri(httpChallenge.FileUrl);
-                Console.WriteLine($" Answer should now be browsable at {answerUri}");
-                Log.Information("Answer should now be browsable at {answerUri}", answerUri);
-
                 try
                 {
-                    Console.WriteLine(" Submitting answer");
-                    Log.Information("Submitting answer");
-                    authzState.Challenges = new AuthorizeChallenge[] {challenge};
-                    _client.SubmitChallengeAnswer(authzState, AcmeProtocol.CHALLENGE_TYPE_HTTP, true);
-
-                    // have to loop to wait for server to stop being pending.
-                    // TODO: put timeout/retry limit in this loop
-                    while (authzState.Status == "pending")
+                    using (WebClient webClient = new WebClient())
                     {
-                        Console.WriteLine(" Refreshing authorization");
-                        Log.Information("Refreshing authorization");
-                        Thread.Sleep(4000); // this has to be here to give ACME server a chance to think
-                        var newAuthzState = _client.RefreshIdentifierAuthorization(authzState);
-                        if (newAuthzState.Status != "pending")
-                            authzState = newAuthzState;
+                        webClient.Headers["User-Agent"] = "letsencrypt-win-simple";
+                        webClient.DownloadString(new Uri("http://" + dnsIdentifier));
                     }
 
-                    Console.WriteLine($" Authorization Result: {authzState.Status}");
-                    Log.Information("Auth Result {Status}", authzState.Status);
-                    if (authzState.Status == "invalid")
+                    target.Plugin.CreateAuthorizationFile(answerPath, httpChallenge.FileContent);
+                    target.Plugin.BeforeAuthorize(target, answerPath, httpChallenge.Token);
+
+                    var answerUri = new Uri(httpChallenge.FileUrl);
+                    Console.WriteLine($" Answer should now be browsable at {answerUri}");
+                    Log.Information("Answer should now be browsable at {answerUri}", answerUri);
+
+                    try
                     {
-                        Log.Error("Authorization Failed {Status}", authzState.Status);
-                        Log.Debug("Full Error Details {@authzState}", authzState);
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine(
-                            "\n******************************************************************************");
-                        Console.WriteLine($"The ACME server was probably unable to reach {answerUri}");
-                        Log.Error("Unable to reach {answerUri}", answerUri);
+                        Console.WriteLine(" Submitting answer");
+                        Log.Information("Submitting answer");
+                        authzState.Challenges = new AuthorizeChallenge[] { challenge };
+                        _client.SubmitChallengeAnswer(authzState, AcmeProtocol.CHALLENGE_TYPE_HTTP, true);
 
-                        Console.WriteLine("\nCheck in a browser to see if the answer file is being served correctly.");
+                        // have to loop to wait for server to stop being pending.
+                        // TODO: put timeout/retry limit in this loop
+                        while (authzState.Status == "pending")
+                        {
+                            Console.WriteLine(" Refreshing authorization");
+                            Log.Information("Refreshing authorization");
+                            Thread.Sleep(4000); // this has to be here to give ACME server a chance to think
+                            var newAuthzState = _client.RefreshIdentifierAuthorization(authzState);
+                            if (newAuthzState.Status != "pending")
+                                authzState = newAuthzState;
+                        }
 
-                        target.Plugin.OnAuthorizeFail(target);
+                        Console.WriteLine($" Authorization Result: {authzState.Status}");
+                        Log.Information("Auth Result {Status}", authzState.Status);
+                        if (authzState.Status == "invalid")
+                        {
+                            Log.Error("Authorization Failed {Status}", authzState.Status);
+                            Log.Debug("Full Error Details {@authzState}", authzState);
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine(
+                                "\n******************************************************************************");
+                            Console.WriteLine($"The ACME server was probably unable to reach {answerUri}");
+                            Log.Error("Unable to reach {answerUri}", answerUri);
 
-                        Console.WriteLine(
-                            "\n******************************************************************************");
-                        Console.ResetColor();
+                            Console.WriteLine("\nCheck in a browser to see if the answer file is being served correctly.");
+
+                            target.Plugin.OnAuthorizeFail(target);
+
+                            Console.WriteLine(
+                                "\n******************************************************************************");
+                            Console.ResetColor();
+                        }
+                        authStatus.Add(authzState);
                     }
-                    authStatus.Add(authzState);
+                    finally
+                    {
+                        if (authzState.Status == "valid")
+                        {
+                            target.Plugin.DeleteAuthorization(answerPath, httpChallenge.Token, webRootPath, filePath);
+                        }
+                    }
                 }
-                finally
+                catch (Exception e)
                 {
-                    if (authzState.Status == "valid")
-                    {
-                        target.Plugin.DeleteAuthorization(answerPath, httpChallenge.Token, webRootPath, filePath);
-                    }
+                    authzState.Status = "invalid";
+                    authStatus.Add(authzState);
+                    if (File.Exists(answerPath))
+                        File.Delete(answerPath);
+
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("\n******************************************************************************");
+                    Console.WriteLine($"Letsencrypt was unable to reach http://{target.Host} in a proper way");
+                    Console.WriteLine($"Check if there is any errors with the domain \"{target.Host}\" or if it has expired!");
+                    Console.WriteLine("******************************************************************************");
+                    Console.ResetColor();
                 }
             }
             foreach (var authState in authStatus)
@@ -1081,7 +1125,7 @@ namespace LetsEncrypt.ACME.Simple
                     return authState;
                 }
             }
-            return new AuthorizationState {Status = "valid"};
+            return new AuthorizationState { Status = "valid" };
         }
 
         // Replaces the characters of the typed in password with asterisks

@@ -147,7 +147,11 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Domain.cs" />
     <Compile Include="ObjectExtensions.cs" />
+    <Compile Include="Plugin\DeleteRenewalPlugin.cs" />
+    <Compile Include="Plugin\OverviewPlugin.cs" />
+    <Compile Include="Plugin\SanByDomainPlugin.cs" />
     <Compile Include="Plugin\WebDavPlugin.cs" />
     <Compile Include="Plugin\IISPlugin.cs" />
     <Compile Include="Plugin\IISSiteServerPlugin.cs" />
